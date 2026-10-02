@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!DOCTYPE html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>RHF Cari</title>
 <style>
 :root{--bg:#f2f5fb;--tx:#14213d;--mut:#5d6b86;--ac:#2f5bff;--card:#fff;--ln:#d5dcea}
@@ -11,29 +11,163 @@ input{flex:1;min-width:0;border:0;outline:0;font-size:18px;padding:12px 0;backgr
 button{border:0;background:var(--ac);color:#fff;border-radius:99px;padding:0 22px;font-weight:700;cursor:pointer}
 .r{margin:22px 0}.r a{font-size:19px;color:var(--ac);text-decoration:none}.r small{color:var(--mut);display:block;word-break:break-all}.r p{margin:4px 0 0}
 .m,.foot{color:var(--mut);font-size:14px}.foot{text-align:center;margin-top:40px}.foot a,.m a{color:var(--ac)}
+#v{position:fixed;inset:0;z-index:9;background:var(--bg);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}#v[hidden]{display:none}
+.vb{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--ln);background:var(--card);font-size:14px}.vb span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vb button{padding:6px 14px;font-size:14px}.vb a{color:var(--ac);white-space:nowrap}#vh{padding:6px 12px;font-size:13px;color:var(--mut)}#vf{flex:1;width:100%;border:0;background:#fff}
 .pg{display:flex;justify-content:space-between}b{background:#2f5bff22;font-weight:700}
+.tag{display:inline-block;background:var(--ln);color:var(--mut);border-radius:6px;padding:1px 6px;font-size:12px;margin-left:6px}
 </style>
 <main id="m" class="home"><h1><a href="/">RHF <i>Cari</i></a></h1>
-<form id="f"><input id="q" placeholder="Cari apa hari ini?" autocomplete="off" list="sg" autofocus><button>Cari</button></form><datalist id="sg"></datalist>
-<div id="out"></div><p class="foot"><a href="/admin.html">Tambah situs</a> · index sendiri</p></main>
+<form id="f"><input id="q" placeholder="Cari apa hari ini?" autocomplete="off" list="sg" autofocus><button id="b">Cari</button></form><datalist id="sg"></datalist>
+<div id="v" hidden>
+  <div class="vb"><button id="vx">✕ Tutup</button><span id="vu"></span><a id="vt" target="_blank" rel="noopener">Tab baru ↗</a></div>
+  <div id="vh">Layar kosong? Situs memblokir iframe — pakai “Tab baru”. <span id="vst"></span></div>
+  <iframe id="vf" allow="clipboard-read; clipboard-write; fullscreen; geolocation; microphone; camera" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+</div>
+<div id="out"><p class="m" style="text-align:center">Ketik kata untuk mencari, atau alamat situs (contoh: <b>docs.python.org</b>) untuk langsung membuka. Awali dengan <b>?</b> untuk memaksa pencarian.</p></div>
+<p class="foot"><a href="/admin.html">Tambah situs</a> · index sendiri</p></main>
 <script>
 const $=i=>document.getElementById(i),esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const hl=s=>esc(s).replace(/\[\[/g,"<b>").replace(/\]\]/g,"</b>");   // escape dulu, baru sorot: aman dari XSS
+
+/* ---- identitas klien stabil, tapi tidak mencurigakan ---- */
+const CLIENT_ID = (() => {
+  let v = localStorage.getItem("rhf_cid");
+  if (!v) { v = crypto.randomUUID(); localStorage.setItem("rhf_cid", v); }
+  return v;
+})();
+const SESSION_TS = Date.now();
+
+/* header yang menyerupai navigasi browser asli */
+const BASE_HEADERS = () => ({
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": navigator.language || "id-ID",
+  "X-Client-Id": CLIENT_ID,
+  "X-Session-Age": String(Math.floor((Date.now() - SESSION_TS)/1000)),
+  "X-Requested-With": "XMLHttpRequest"
+});
+
+/* delay manusia: 80–350ms sebelum tiap fetch */
+const jitter = (min=80, max=350) => new Promise(r => setTimeout(r, min + Math.random()*(max-min)));
+
+/* ---- alamat ---- */
+const alamat=s=>{s=s.trim();if(!s||/\s/.test(s)||s[0]==="?")return null;
+  if(/^https?:\/\//i.test(s)){try{return new URL(s).href}catch(e){return null}}
+  return /^(localhost|(\d{1,3}\.){3}\d{1,3}|([a-z0-9-]+\.)+[a-z]{2,24})(:\d+)?([\/?#]\S*)?$/i.test(s)?"https://"+s:null};
+
+/* ---- warm-up: preflight ke origin target sebelum iframe load ---- */
+async function warmup(url){
+  try {
+    // HEAD ringan via fetch no-cors: browser kirim Sec-Fetch-* yang benar
+    await fetch(url, {method:"HEAD", mode:"no-cors", credentials:"include",
+                      referrerPolicy:"strict-origin-when-cross-origin"});
+  } catch(e){}
+}
+
+function buka(u,push=true){
+  u=u.replace(/^http:\/\//i,"https://");
+  $("vf").src=u; $("vu").textContent=u; $("vt").href=u; $("v").hidden=false;
+  $("vst").textContent=""; 
+  // deteksi iframe kosong (X-Frame-Options / CSP frame-ancestors)
+  const t0=Date.now();
+  const chk=setInterval(()=>{
+    try{
+      const doc=$("vf").contentDocument;
+      if(doc && doc.location.href==="about:blank" && Date.now()-t0>2500){
+        $("vst").textContent="(blokir terdeteksi — pakai Tab baru)"; clearInterval(chk);
+      } else if(Date.now()-t0>4000) clearInterval(chk);
+    }catch(e){ clearInterval(chk); }
+  },500);
+  if(push) history.pushState({v:1},"","#buka");
+}
+function tutup(){$("v").hidden=true;$("vf").src="about:blank"}
+
+/* ---- pencarian ---- */
+const hl=s=>esc(s).replace(/\[\[/g,"<b>").replace(/\]\]/g,"</b>");
+
 async function cari(q,p=1,push=true){
-  q=q.trim();if(!q)return;$("q").value=q;$("m").className="";$("out").innerHTML="<p class=m>Mencari…</p>";
-  if(push)history.pushState(0,"","?q="+encodeURIComponent(q)+(p>1?"&p="+p:""));
-  let d;try{d=await(await fetch("/api/cari?q="+encodeURIComponent(q)+"&p="+p)).json()}catch(e){d={error:"Tidak bisa terhubung"}}
-  if(d.error){$("out").innerHTML="<p>"+esc(d.error)+"</p>";return}
+  q=q.trim(); if(!q) return;
+  $("q").value=q; $("m").className=""; $("out").innerHTML="<p class=m>Mencari…</p>";
+  if(push) history.pushState(0,"","?q="+encodeURIComponent(q)+(p>1?"&p="+p:""));
+  await jitter();
+  let d;
+  try{
+    d = await (await fetch("/api/cari?q="+encodeURIComponent(q)+"&p="+p,{
+      headers: BASE_HEADERS(),
+      credentials: "same-origin",
+      referrerPolicy: "strict-origin-when-cross-origin"
+    })).json();
+  }catch(e){ d={error:"Tidak bisa terhubung"} }
+  if(d.error){ $("out").innerHTML="<p>"+esc(d.error)+"</p>"; return; }
+
   let h="<p class=m>"+d.total+" hasil"+(p>1?" · halaman "+p:"")+"</p>";
-  if(d.saran)h+="<p>Maksud Anda: <a href='?q="+encodeURIComponent(d.saran)+"' data-q='"+esc(d.saran)+"'><b>"+esc(d.saran)+"</b></a>?</p>";
-  for(const r of d.hasil)h+="<div class=r><a href='"+esc(r.url)+"' target=_blank rel=noopener>"+esc(r.judul)+"</a><small>"+esc(r.url)+"</small><p>"+hl(r.cuplikan)+"…</p></div>";
-  if(!d.hasil.length)h+="<p>Tidak ada hasil. Coba kata lain.<br><span class=m>Tips: \"frasa pas\", -kata, site:domain.com</span></p>";
-  h+="<div class=pg>"+(p>1?"<a href='#' data-q='"+esc(q)+"' data-p='"+(p-1)+"'>← Sebelumnya</a>":"<span></span>")+(p*10<d.total?"<a href='#' data-q='"+esc(q)+"' data-p='"+(p+1)+"'>Berikutnya →</a>":"")+"</div>";
-  $("out").innerHTML=h}
-$("f").onsubmit=e=>{e.preventDefault();cari($("q").value)};
-$("out").onclick=e=>{const a=e.target.closest("a[data-q]");if(a){e.preventDefault();cari(a.dataset.q,+(a.dataset.p||1))}};
-let t;$("q").oninput=()=>{clearTimeout(t);t=setTimeout(async()=>{const v=$("q").value;if(v.length<2)return;try{const r=await(await fetch("/api/saran?q="+encodeURIComponent(v))).json();
- $("sg").innerHTML=r.map(x=>"<option value=\""+esc(x)+"\">").join("")}catch(e){}},250)};
-const u=new URLSearchParams(location.search);if(u.get("q"))cari(u.get("q"),+(u.get("p")||1),false);
-window.onpopstate=()=>{const u=new URLSearchParams(location.search);u.get("q")?cari(u.get("q"),+(u.get("p")||1),false):location.reload()};
+  if(d.saran) h+="<p>Maksud Anda: <a href='?q="+encodeURIComponent(d.saran)+"' data-q='"+esc(d.saran)+"'><b>"+esc(d.saran)+"</b></a>?</p>";
+
+  for(const r of d.hasil){
+    /* setiap hasil: judul, url, snippet, tombol buka-inline */
+    const host = (()=>{ try{return new URL(r.url).host}catch(e){return ""} })();
+    h += "<div class=r>"
+      + "<a href='"+esc(r.url)+"' target=_blank rel='noopener noreferrer'>"+esc(r.judul)+"</a>"
+      + "<span class='tag'>"+esc(host)+"</span>"
+      + "<small>"+esc(r.url)+"</small>"
+      + "<p>"+hl(r.cuplikan)+"…</p>"
+      + "<p><a href='#' data-buka='"+esc(r.url)+"'>Buka di sini</a> · "
+      + "<a href='#' data-copy='"+esc(r.url)+"'>Salin link</a></p>"
+      + "</div>";
+  }
+  if(!d.hasil.length) h+="<p>Tidak ada hasil. Coba kata lain.<br><span class=m>Tips: \"frasa pas\", -kata, site:domain.com</span></p>";
+  h+="<div class=pg>"+(p>1?"<a href='#' data-q='"+esc(q)+"' data-p='"+(p-1)+"'>← Sebelumnya</a>":"<span></span>")
+    +(p*10<d.total?"<a href='#' data-q='"+esc(q)+"' data-p='"+(p+1)+"'>Berikutnya →</a>":"")+"</div>";
+  $("out").innerHTML=h;
+}
+
+/* ---- delegasi event ---- */
+$("f").onsubmit = e=>{
+  e.preventDefault();
+  const v=$("q").value, u=alamat(v);
+  if(u){ warmup(u); buka(u); return; }
+  cari(v.replace(/^\?\s*/,""));
+};
+$("out").onclick = e=>{
+  const a=e.target.closest("a[data-q]"); if(a){ e.preventDefault(); cari(a.dataset.q,+(a.dataset.p||1)); return; }
+  const b=e.target.closest("a[data-buka]"); if(b){ e.preventDefault(); warmup(b.dataset.buka); buka(b.dataset.buka); return; }
+  const c=e.target.closest("a[data-copy]"); if(c){
+    e.preventDefault();
+    navigator.clipboard.writeText(c.dataset.copy).then(()=>{
+      c.textContent="Tersalin"; setTimeout(()=>c.textContent="Salin link",1200);
+    });
+  }
+};
+$("vx").onclick=()=>{ if(history.state && history.state.v) history.back(); else tutup(); };
+document.onkeydown=e=>{ if(e.key==="Escape" && !$("v").hidden) $("vx").click(); };
+
+/* ---- saran ---- */
+let t;
+$("q").oninput=()=>{
+  $("b").textContent = alamat($("q").value) ? "Buka" : "Cari";
+  clearTimeout(t);
+  t=setTimeout(async()=>{
+    const v=$("q").value;
+    if(v.length<2 || alamat(v)) return;
+    try{
+      const r=await(await fetch("/api/saran?q="+encodeURIComponent(v),{headers:BASE_HEADERS(),credentials:"same-origin"})).json();
+      $("sg").innerHTML=r.map(x=>"<option value=\""+esc(x)+"\">").join("");
+    }catch(e){}
+  },250);
+};
+
+/* ---- history ---- */
+const u=new URLSearchParams(location.search);
+if(u.get("q")) cari(u.get("q"),+(u.get("p")||1),false);
+window.onpopstate=()=>{
+  if(!$("v").hidden){ tutup(); return; }
+  const u=new URLSearchParams(location.search);
+  u.get("q") ? cari(u.get("q"),+(u.get("p")||1),false) : location.reload();
+};
+
+/* ---- izinkan situs membuka tab dari dalam iframe ---- */
+window.addEventListener("message", ev=>{
+  if(ev.data && ev.data.type==="rhf-open" && typeof ev.data.url==="string"){
+    window.open(ev.data.url, "_blank", "noopener,noreferrer");
+  }
+});
 </script></html>
