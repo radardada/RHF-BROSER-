@@ -18,14 +18,26 @@ class handler(BaseHTTPRequestHandler):
         if url and not url.startswith("http"): url = "https://" + url
         if url and not urlparse(url).netloc: return self.reply({"error": "URL tidak valid"}, 400)
         mx = str(d.get("max", "1000")); mx = mx if mx.isdigit() else "1000"
-        body = json.dumps({"ref": os.environ.get("GH_BRANCH", "main"), "inputs": {"url": url, "max": mx, "folder": bool(d.get("folder"))}}).encode()
-        req = urllib.request.Request("https://api.github.com/repos/%s/actions/workflows/crawl.yml/dispatches" % os.environ.get("GH_REPO", ""), body,
-            {"Authorization": "Bearer " + os.environ.get("GH_TOKEN", ""), "Accept": "application/vnd.github+json",
+        repo = os.environ.get("GH_REPO", "").strip()
+        for pre in ("https://github.com/", "http://github.com/", "github.com/"):
+            if repo.lower().startswith(pre): repo = repo[len(pre):]
+        repo = repo.strip("/")
+        if repo.endswith(".git"): repo = repo[:-4]
+        token = os.environ.get("GH_TOKEN", "").strip()
+        branch = os.environ.get("GH_BRANCH", "main").strip() or "main"
+        if repo.count("/") != 1 or not token:
+            return self.reply({"error": "Env belum benar: GH_REPO harus 'user/repo' (terbaca: '%s'), GH_TOKEN %s. Redeploy setelah mengubah env." % (repo, "ada" if token else "KOSONG")}, 500)
+        body = json.dumps({"ref": branch, "inputs": {"url": url, "max": mx, "folder": "true" if d.get("folder") else "false"}}).encode()
+        req = urllib.request.Request("https://api.github.com/repos/%s/actions/workflows/crawl.yml/dispatches" % repo, body,
+            {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
              "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "rhf-cari", "Content-Type": "application/json"})
         try:
             urllib.request.urlopen(req, timeout=10)
         except urllib.error.HTTPError as e:
-            return self.reply({"error": "GitHub menolak (%d). Cek GH_TOKEN/GH_REPO." % e.code}, 502)
+            try: pesan = json.loads(e.read().decode("utf-8", "ignore")).get("message", "")[:150]
+            except Exception: pesan = ""
+            return self.reply({"error": "GitHub menolak (%d) untuk repo '%s' branch '%s': %s" % (e.code, repo, branch, pesan)}, 502)
         except Exception as e:
             return self.reply({"error": "Gagal menghubungi GitHub: " + str(e)[:80]}, 502)
         self.reply({"ok": True, "pesan": "Crawl dimulai di GitHub Actions" + (": " + url if url else " (segarkan semua situs)")})
+        
