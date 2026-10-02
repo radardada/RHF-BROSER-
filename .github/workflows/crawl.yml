@@ -1,0 +1,34 @@
+name: crawl
+on:
+  workflow_dispatch:
+    inputs:
+      url:    { description: "URL situs (kosong = segarkan semua situs di database)", required: false, default: "" }
+      max:    { description: "Maks halaman (0 = tanpa batas)", required: false, default: "1000" }
+      folder: { description: "Hanya folder URL ini", type: boolean, default: false }
+  schedule:
+    - cron: "0 3 * * 0"
+
+concurrency: { group: crawl, cancel-in-progress: false }
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Crawl
+        env:
+          URL: ${{ inputs.url }}
+          MAX: ${{ inputs.max || '1000' }}
+          FOLDER: ${{ inputs.folder && '--folder' || '' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RHF_CONTACT: ${{ secrets.RHF_CONTACT }}
+        run: |
+          if [ -n "$URL" ]; then
+            python crawler/rhf_crawl.py crawl "$URL" --max "$MAX" --menit 330 $FOLDER
+          else
+            python crawler/rhf_crawl.py crawl --semua --max "$MAX" --menit 330
+          fi
