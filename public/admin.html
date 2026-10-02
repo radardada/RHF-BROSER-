@@ -1,0 +1,13 @@
+<!DOCTYPE html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RHF Cari - Admin</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:560px;margin:0 auto;padding:30px 20px;background:#f2f5fb;color:#14213d}
+input,button{font:inherit;width:100%;box-sizing:border-box;padding:12px;margin:6px 0;border:1.5px solid #d5dcea;border-radius:12px}
+button{background:#2f5bff;color:#fff;border:0;font-weight:700;cursor:pointer}label{display:block;margin-top:8px}label input{width:auto;margin-right:8px}#r{margin-top:14px;font-weight:600}</style>
+<h2>Tambah situs ke RHF Cari</h2>
+<p>Tempel satu link, seluruh situs dijelajahi di GitHub Actions (patuh robots.txt, sitemap ikut dibaca). Kosongkan URL untuk menyegarkan semua situs.</p>
+<input id="key" type="password" placeholder="Kunci admin"><input id="url" placeholder="https://situsmu.com/halaman-apa-saja">
+<input id="max" type="number" value="1000" min="0" placeholder="Maks halaman (0 = tanpa batas)">
+<label><input id="fo" type="checkbox">Hanya folder ini (jangan seluruh situs)</label><button id="go">Mulai crawl</button><div id="r"></div>
+<script>const $=i=>document.getElementById(i);$("key").value=localStorage.rhfk||"";
+$("go").onclick=async()=>{localStorage.rhfk=$("key").value;$("r").textContent="Mengirim…";
+try{const d=await(await fetch("/api/crawl",{method:"POST",body:JSON.stringify({key:$("key").value,url:$("url").value,max:$("max").value,folder:$("fo").checked})})).json();
+$("r").textContent=d.ok?d.pesan+". Hasil muncul di pencarian setelah selesai (lihat tab Actions di GitHub).":(d.error||"Gagal")}catch(e){$("r").textContent="Gagal terhubung"}}</script></html>

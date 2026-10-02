@@ -1,0 +1,39 @@
+<!DOCTYPE html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RHF Cari</title>
+<style>
+:root{--bg:#f2f5fb;--tx:#14213d;--mut:#5d6b86;--ac:#2f5bff;--card:#fff;--ln:#d5dcea}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1524;--tx:#e6ebf7;--mut:#93a0bd;--ac:#7b9bff;--card:#182036;--ln:#2a3552}}
+body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--tx)}
+main{max-width:680px;margin:0 auto;padding:30px 20px 40px}main.home{padding-top:18vh}
+h1{font-size:52px;letter-spacing:-.04em;margin:0 0 20px;text-align:center}h1 a{color:inherit;text-decoration:none}h1 i{font-style:normal;color:var(--ac)}
+form{display:flex;border:1.5px solid var(--ln);border-radius:99px;background:var(--card);padding:4px 6px 4px 20px}
+input{flex:1;min-width:0;border:0;outline:0;font-size:18px;padding:12px 0;background:none;color:inherit}
+button{border:0;background:var(--ac);color:#fff;border-radius:99px;padding:0 22px;font-weight:700;cursor:pointer}
+.r{margin:22px 0}.r a{font-size:19px;color:var(--ac);text-decoration:none}.r small{color:var(--mut);display:block;word-break:break-all}.r p{margin:4px 0 0}
+.m,.foot{color:var(--mut);font-size:14px}.foot{text-align:center;margin-top:40px}.foot a,.m a{color:var(--ac)}
+.pg{display:flex;justify-content:space-between}b{background:#2f5bff22;font-weight:700}
+</style>
+<main id="m" class="home"><h1><a href="/">RHF <i>Cari</i></a></h1>
+<form id="f"><input id="q" placeholder="Cari apa hari ini?" autocomplete="off" list="sg" autofocus><button>Cari</button></form><datalist id="sg"></datalist>
+<div id="out"></div><p class="foot"><a href="/admin.html">Tambah situs</a> · index sendiri</p></main>
+<script>
+const $=i=>document.getElementById(i),esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const hl=s=>esc(s).replace(/\[\[/g,"<b>").replace(/\]\]/g,"</b>");   // escape dulu, baru sorot: aman dari XSS
+async function cari(q,p=1,push=true){
+  q=q.trim();if(!q)return;$("q").value=q;$("m").className="";$("out").innerHTML="<p class=m>Mencari…</p>";
+  if(push)history.pushState(0,"","?q="+encodeURIComponent(q)+(p>1?"&p="+p:""));
+  let d;try{d=await(await fetch("/api/cari?q="+encodeURIComponent(q)+"&p="+p)).json()}catch(e){d={error:"Tidak bisa terhubung"}}
+  if(d.error){$("out").innerHTML="<p>"+esc(d.error)+"</p>";return}
+  let h="<p class=m>"+d.total+" hasil"+(p>1?" · halaman "+p:"")+"</p>";
+  if(d.saran)h+="<p>Maksud Anda: <a href='?q="+encodeURIComponent(d.saran)+"' data-q='"+esc(d.saran)+"'><b>"+esc(d.saran)+"</b></a>?</p>";
+  for(const r of d.hasil)h+="<div class=r><a href='"+esc(r.url)+"' target=_blank rel=noopener>"+esc(r.judul)+"</a><small>"+esc(r.url)+"</small><p>"+hl(r.cuplikan)+"…</p></div>";
+  if(!d.hasil.length)h+="<p>Tidak ada hasil. Coba kata lain.<br><span class=m>Tips: \"frasa pas\", -kata, site:domain.com</span></p>";
+  h+="<div class=pg>"+(p>1?"<a href='#' data-q='"+esc(q)+"' data-p='"+(p-1)+"'>← Sebelumnya</a>":"<span></span>")+(p*10<d.total?"<a href='#' data-q='"+esc(q)+"' data-p='"+(p+1)+"'>Berikutnya →</a>":"")+"</div>";
+  $("out").innerHTML=h}
+$("f").onsubmit=e=>{e.preventDefault();cari($("q").value)};
+$("out").onclick=e=>{const a=e.target.closest("a[data-q]");if(a){e.preventDefault();cari(a.dataset.q,+(a.dataset.p||1))}};
+let t;$("q").oninput=()=>{clearTimeout(t);t=setTimeout(async()=>{const v=$("q").value;if(v.length<2)return;try{const r=await(await fetch("/api/saran?q="+encodeURIComponent(v))).json();
+ $("sg").innerHTML=r.map(x=>"<option value=\""+esc(x)+"\">").join("")}catch(e){}},250)};
+const u=new URLSearchParams(location.search);if(u.get("q"))cari(u.get("q"),+(u.get("p")||1),false);
+window.onpopstate=()=>{const u=new URLSearchParams(location.search);u.get("q")?cari(u.get("q"),+(u.get("p")||1),false):location.reload()};
+</script></html>
